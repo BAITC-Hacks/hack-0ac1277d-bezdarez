@@ -67,7 +67,9 @@ def check_disks():
         seen.add((u.total, u.used))
         pct = u.used / u.total * 100
         out.append((level_by(pct, 80, 90),
-                    f"диск {mp} занят на {pct:.0f}% ({gb(u.used)} из {gb(u.total)})"))
+                    f"диск {mp} занят на {pct:.0f}% ({gb(u.used)} из {gb(u.total)})",
+                    "разросшиеся логи, кэш, старые бэкапы или загрузки; "
+                    "скоро может не хватить места для записи"))
     return out
 
 
@@ -104,25 +106,31 @@ def check_memory():
     except (OSError, KeyError, ValueError):
         info = None
     if not info:
-        return [("info", "память: на этой системе не измеряется")]
+        return [("info", "память: на этой системе не измеряется", "")]
     total, avail, swap_total, swap_free = info
     used = total - avail
     pct = used / total * 100
-    out = [(level_by(pct, 80, 90), f"память занята на {pct:.0f}% ({gb(used)} из {gb(total)})")]
+    out = [(level_by(pct, 80, 90), f"память занята на {pct:.0f}% ({gb(used)} из {gb(total)})",
+            "много открытых программ или утечка памяти в одном из процессов; "
+            "возможны тормоза и завершение процессов системой")]
     if swap_total:
         spct = (swap_total - swap_free) / swap_total * 100
-        out.append((level_by(spct, 50, 80), f"swap занят на {spct:.0f}%"))
+        out.append((level_by(spct, 50, 80), f"swap занят на {spct:.0f}%",
+                    "не хватает оперативной памяти, система выгружает данные на диск "
+                    "и работает медленнее"))
     return out
 
 
 def check_load():
     cores = os.cpu_count() or 1
     if not hasattr(os, "getloadavg"):
-        return [("info", f"процессор: {cores} ядер, нагрузка на этой системе не измеряется")]
+        return [("info", f"процессор: {cores} ядер, нагрузка на этой системе не измеряется", "")]
     l1, l5, l15 = os.getloadavg()
     ratio = l1 / cores
     return [(level_by(ratio, 1.0, 2.0),
-             f"нагрузка cpu {l1:.2f} / {l5:.2f} / {l15:.2f} на {cores} ядер")]
+             f"нагрузка cpu {l1:.2f} / {l5:.2f} / {l15:.2f} на {cores} ядер",
+             "тяжёлый процесс, зависшая программа или майнер; "
+             "посмотрите top / htop, что грузит процессор")]
 
 
 def check_uptime():
@@ -138,7 +146,7 @@ def check_uptime():
     else:
         return []
     days, rest = divmod(int(sec), 86400)
-    return [("info", f"система работает {days} д {rest // 3600} ч")]
+    return [("info", f"система работает {days} д {rest // 3600} ч", "")]
 
 
 def check_services():
@@ -147,8 +155,10 @@ def check_services():
         return []
     units = [l.split()[0] for l in out.splitlines() if l.strip()]
     if not units:
-        return [("info", "упавших systemd-служб нет")]
-    return [("critical", f"служба не запустилась: {u}") for u in units]
+        return [("info", "упавших systemd-служб нет", "")]
+    return [("critical", f"служба не запустилась: {u}",
+             f"ошибка в конфиге, занятый порт или нет зависимости; "
+             f"причину покажет systemctl status {u}") for u in units]
 
 
 def check_journal():
@@ -156,15 +166,17 @@ def check_journal():
     if out is None:
         return []
     n = len([l for l in out.splitlines() if l.strip()])
-    return [(level_by(n, 1, 20), f"ошибок в системном журнале за час: {n}")]
+    return [(level_by(n, 1, 20), f"ошибок в системном журнале за час: {n}",
+             "сбои служб, драйверов или диска; подробности: journalctl -p err --since -1h")]
 
 
 def check_network():
     try:
         socket.create_connection(("1.1.1.1", 53), timeout=2).close()
     except OSError:
-        return [("warn", "нет доступа в интернет")]
-    return [("info", "интернет доступен")]
+        return [("warn", "нет доступа в интернет",
+                 "отключён кабель или Wi-Fi, проблемы у провайдера, DNS или файрвол")]
+    return [("info", "интернет доступен", "")]
 
 
 CHECKS = [check_disks, check_memory, check_load, check_services,
@@ -175,11 +187,15 @@ def collect():
     events = []
     for check in CHECKS:
         try:
-            for level, text in check():
-                events.append({"event": text, "level": level})
+            for level, text, hint in check():
+                ev = {"event": text, "level": level}
+                if hint and level != "info":
+                    ev["hint"] = hint
+                events.append(ev)
         except Exception as e:
             events.append({"event": f"проверка {check.__name__} не выполнена: {e}",
-                           "level": "warn"})
+                           "level": "warn",
+                           "hint": "нет прав или команда недоступна на этой системе"})
     return events
 
 
@@ -200,6 +216,8 @@ def show(events, levels, source):
     for i, e in enumerate(shown, 1):
         lvl = e["level"]
         print(f"{i:>3}. {COLORS[lvl]}{lvl:<8}{RESET} {e['event']}")
+        if e.get("hint"):
+            print(f"     возможно: {e['hint']}")
 
     print()
     for lvl in levels:
