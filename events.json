@@ -1,0 +1,10 @@
+[
+  {"event": "disk 90%", "level": "critical"},
+  {"event": "user login", "level": "info"},
+  {"event": "cpu 40%", "level": "info"},
+  {"event": "payment failed", "level": "critical"},
+  {"event": "heartbeat", "level": "info"},
+  {"event": "db timeout", "level": "critical"},
+  {"event": "cache miss", "level": "warn"},
+  {"event": "deploy ok", "level": "info"}
+]
